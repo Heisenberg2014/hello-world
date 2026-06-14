@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from pathlib import Path
 from typing import Optional
@@ -108,7 +109,6 @@ def get_video_details(service, video_ids: list[str]) -> dict[str, dict]:
 
 def _parse_duration(iso_duration: str) -> str:
     """Convert ISO 8601 duration (PT1H2M3S) to HH:MM:SS or MM:SS."""
-    import re
     match = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso_duration)
     if not match:
         return "00:00"
@@ -118,6 +118,24 @@ def _parse_duration(iso_duration: str) -> str:
     if hours:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def extract_video_id(url_or_id: str) -> Optional[str]:
+    """Extract YouTube video ID from a URL or return the ID if already bare."""
+    patterns = [
+        r"youtu\.be/([A-Za-z0-9_-]{11})",
+        r"youtube\.com/watch\?(?:.*&)?v=([A-Za-z0-9_-]{11})",
+        r"youtube\.com/shorts/([A-Za-z0-9_-]{11})",
+        r"youtube\.com/embed/([A-Za-z0-9_-]{11})",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, url_or_id)
+        if m:
+            return m.group(1)
+    # Accept a bare 11-character video ID
+    if re.match(r"^[A-Za-z0-9_-]{11}$", url_or_id.strip()):
+        return url_or_id.strip()
+    return None
 
 
 def get_transcript(video_id: str, languages: list[str] = None) -> Optional[list[dict]]:

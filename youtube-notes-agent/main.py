@@ -3,11 +3,12 @@
 YouTube Watch Later → Appunti Markdown
 
 Uso:
-  python main.py                  # processa tutti i video non ancora processati
-  python main.py --limit 5        # processa al massimo 5 video
-  python main.py --reprocess ID   # riprocessa un video specifico per ID
-  python main.py --list           # mostra i video nella Watch Later
-  python main.py --status         # mostra quanti video sono già stati processati
+  python main.py                        # processa tutti i video non ancora processati
+  python main.py --limit 5              # processa al massimo 5 video
+  python main.py --url URL              # processa un video specifico da URL YouTube
+  python main.py --reprocess VIDEO_ID   # riprocessa un video specifico per ID
+  python main.py --list                 # mostra i video nella Watch Later
+  python main.py --status               # mostra quanti video sono già stati processati
 """
 
 import argparse
@@ -25,6 +26,8 @@ from youtube_client import (
     get_video_details,
     get_transcript,
     format_transcript_text,
+    extract_video_id,
+    _parse_duration,
 )
 from notes_generator import generate_notes, save_note
 from state import is_processed, mark_processed, get_unprocessed, load_state
@@ -97,6 +100,49 @@ def _process_video(video: dict, notes_dir: Path) -> bool:
     return True
 
 
+def _fetch_video_by_id(service, video_id: str) -> dict:
+    """Fetch full video metadata from the YouTube API by ID."""
+    response = service.videos().list(
+        part="snippet,contentDetails",
+        id=video_id,
+    ).execute()
+
+    items = response.get("items", [])
+    if not items:
+        print(f"✗ Video non trovato: {video_id}")
+        sys.exit(1)
+
+    item = items[0]
+    snippet = item["snippet"]
+    return {
+        "video_id": video_id,
+        "title": snippet.get("title", "Unknown"),
+        "channel": snippet.get("channelTitle", "Unknown"),
+        "description": snippet.get("description", ""),
+        "published_at": snippet.get("publishedAt", ""),
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "duration": _parse_duration(item["contentDetails"].get("duration", "PT0S")),
+    }
+
+
+def cmd_url(args):
+    """Processa un video da URL YouTube (qualsiasi video, non solo Watch Later)."""
+    video_id = extract_video_id(args.url)
+    if not video_id:
+        print(f"✗ URL non riconosciuto: {args.url}")
+        print("   Formati supportati:")
+        print("     https://youtu.be/VIDEO_ID")
+        print("     https://www.youtube.com/watch?v=VIDEO_ID")
+        print("     https://www.youtube.com/shorts/VIDEO_ID")
+        sys.exit(1)
+
+    notes_dir = get_notes_dir()
+    print("Connessione a YouTube...")
+    service = get_authenticated_service()
+    video = _fetch_video_by_id(service, video_id)
+    _process_video(video, notes_dir)
+
+
 def cmd_process(args):
     """Processa i video non ancora processati."""
     notes_dir = get_notes_dir()
@@ -146,34 +192,9 @@ def cmd_process(args):
 def cmd_reprocess(args):
     """Riprocessa un video specifico (sovrascrive la nota esistente)."""
     notes_dir = get_notes_dir()
-
     print("Connessione a YouTube...")
     service = get_authenticated_service()
-
-    # Fetch video info directly
-    response = service.videos().list(
-        part="snippet,contentDetails",
-        id=args.reprocess,
-    ).execute()
-
-    items = response.get("items", [])
-    if not items:
-        print(f"✗ Video non trovato: {args.reprocess}")
-        sys.exit(1)
-
-    item = items[0]
-    snippet = item["snippet"]
-    from youtube_client import _parse_duration
-    video = {
-        "video_id": args.reprocess,
-        "title": snippet.get("title", "Unknown"),
-        "channel": snippet.get("channelTitle", "Unknown"),
-        "description": snippet.get("description", ""),
-        "published_at": snippet.get("publishedAt", ""),
-        "url": f"https://www.youtube.com/watch?v={args.reprocess}",
-        "duration": _parse_duration(item["contentDetails"].get("duration", "PT0S")),
-    }
-
+    video = _fetch_video_by_id(service, args.reprocess)
     _process_video(video, notes_dir)
 
 
@@ -183,13 +204,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    sub = parser.add_subparsers(dest="command")
 
-    # Default command (no subcommand = process)
     parser.add_argument("--limit", type=int, help="Numero massimo di video da processare")
     parser.add_argument("--list", action="store_true", help="Mostra video nella Watch Later")
     parser.add_argument("--status", action="store_true", help="Mostra stato elaborazione")
-    parser.add_argument("--reprocess", metavar="VIDEO_ID", help="Riprocessa un video specifico")
+    parser.add_argument("--reprocess", metavar="VIDEO_ID", help="Riprocessa un video specifico per ID")
+    parser.add_argument("--url", metavar="URL", help="Processa un video specifico da URL YouTube")
 
     args = parser.parse_args()
 
@@ -204,6 +224,8 @@ def main():
         cmd_status(args)
     elif args.reprocess:
         cmd_reprocess(args)
+    elif args.url:
+        cmd_url(args)
     else:
         cmd_process(args)
 
